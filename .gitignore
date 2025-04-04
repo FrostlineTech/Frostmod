@@ -5,3 +5,5 @@
 # This file is used to start the bot and should not be committed to the repository. 
 #if user wants to run the bot, they should create their own file.
 start-bot.bat
+stop-bot.bat
+# This file is used to start the bot and should not be committed to the repository.

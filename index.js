@@ -76,7 +76,11 @@ client.once('ready', () => {
   console.log(`${client.user.tag} is logged in and ready!`);
 
   client.user.setPresence({
-    activities: [{ name: 'Coding in VS Code | Level 100 Dev', type: 0 }],
+    activities: [{
+      name: 'Join My server',
+      url: 'https://discord.gg/BjbUXwFF6n', // Make the URL clickable
+      type: 0, // The type of activity (0 is for "Playing")
+    }],
     status: 'online',
   });
 });
