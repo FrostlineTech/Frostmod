@@ -51,8 +51,38 @@ const commands = [
         .setDescription('The channel to ignore the link filter')
         .setRequired(true)),
 
+  new SlashCommandBuilder().setName('filter')
+    .setDescription('Set the curse word filter level.')
+    .addStringOption(option =>
+      option.setName('level')
+        .setDescription('The filter level: light, moderate, strict')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Light', value: 'light' },
+          { name: 'Moderate', value: 'moderate' },
+          { name: 'Strict', value: 'strict' }
+        )),
+
   new SlashCommandBuilder().setName('help')
     .setDescription('Displays the help menu with available commands'),
+
+  new SlashCommandBuilder().setName('warn')
+    .setDescription('Warn a user.')
+    .addUserOption(option =>
+      option.setName('user')
+        .setDescription('The user to warn')
+        .setRequired(true))
+    .addStringOption(option =>
+      option.setName('reason')
+        .setDescription('The reason for the warning')
+        .setRequired(true)),
+
+  new SlashCommandBuilder().setName('logs')
+    .setDescription('Set the channel for warning logs.')
+    .addChannelOption(option =>
+      option.setName('channel')
+        .setDescription('The channel to send logs')
+        .setRequired(true)),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -77,18 +107,17 @@ client.once('ready', () => {
 
   client.user.setPresence({
     activities: [{
-      name: 'Join My server',
-      url: 'https://discord.gg/BjbUXwFF6n', // Make the URL clickable
+      name: 'FrostMod - Developed by Dakota',
       type: 0, // The type of activity (0 is for "Playing")
     }],
     status: 'online',
   });
 });
 
-// Member join event (Updated with server_name)
+// Member join event
 client.on('guildMemberAdd', async (member) => {
   const guildId = member.guild.id;
-  const serverName = member.guild.name; // Get server name
+  const serverName = member.guild.name;
 
   try {
     const { data: settings, error } = await supabase
@@ -127,19 +156,19 @@ client.on('guildMemberAdd', async (member) => {
       }
     }
 
-    // Track join in database (Now with server_name)
+    // Track join in database
     await supabase.from('member_joins').insert({
       guild_id: guildId,
       user_id: member.user.id,
       username: member.user.tag,
-      server_name: serverName // Added server name
+      server_name: serverName
     });
   } catch (error) {
     console.error('Error handling member join:', error);
   }
 });
 
-// Slash commands (Unchanged)
+// Slash commands handler
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
 
@@ -178,6 +207,61 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.reply(`✅ Invite links will be ignored in ${channel}.`);
     }
 
+    if (commandName === 'filter') {
+      const filterLevel = interaction.options.getString('level');
+      await supabase
+        .from('filtering_settings')
+        .upsert({ guild_id: guild.id, filter_level: filterLevel }, { onConflict: ['guild_id'] });
+      await interaction.reply(`✅ Filter level set to ${filterLevel}.`);
+    }
+
+    if (commandName === 'warn') {
+      const targetUser = interaction.options.getUser('user');
+      const reason = interaction.options.getString('reason');
+      const logsChannel = await getLogsChannel(guild.id);
+
+      if (!logsChannel) {
+        await interaction.reply('⚠️ No logs channel set. Please set a logs channel using `/logs` command.');
+        return;
+      }
+
+      // Add the "Warned by: username" format
+      const warnedBy = `Warned by: ${interaction.user.tag}`;
+
+      // Send the warning message to the logs channel
+      const warningEmbed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('User Warned')
+        .setDescription(`${targetUser.tag} was warned.`)
+        .addFields(
+          { name: 'Reason', value: reason },
+          { name: 'Warned by', value: warnedBy }
+        )
+        .setTimestamp();
+
+      await logsChannel.send({ embeds: [warningEmbed] });
+
+      // Save the warning to Supabase
+      await supabase.from('user_warns').insert([{
+        guild_id: guild.id,
+        user_id: targetUser.id,
+        username: targetUser.tag,
+        reason: reason,
+        warned_by: warnedBy, // Store the "Warned by: username"
+        timestamp: new Date().toISOString(),
+      }]);
+
+      await interaction.reply(`✅ ${targetUser.tag} has been warned for: ${reason}`);
+    }
+
+    if (commandName === 'logs') {
+      const channel = interaction.options.getChannel('channel');
+      await supabase
+        .from('server_settings')
+        .upsert({ guild_id: guild.id, logs_channel_id: channel.id }, { onConflict: ['guild_id'] });
+      await interaction.reply(`✅ Logs channel set to ${channel}.`);
+    }
+
     if (commandName === 'help') {
       const helpEmbed = new EmbedBuilder()
         .setColor('#5865F2')
@@ -188,6 +272,9 @@ client.on('interactionCreate', async (interaction) => {
           { name: '💬 `/wmessage`', value: 'Set the welcome message (supports `{user}` and `{memberCount}`).' },
           { name: '🧑‍🤝‍🧑 `/joinrole`', value: 'Set an auto-role for new members.' },
           { name: '🔒 `/ignorelinks`', value: 'Allow invite links in a specific channel.' },
+          { name: '🚫 `/filter`', value: 'Set the curse word filter level (light, moderate, strict).' },
+          { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
+          { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
         );
       await interaction.reply({ embeds: [helpEmbed] });
     }
@@ -197,33 +284,17 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// Invite link filter (Unchanged)
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  const discordInviteRegex = /(https?:\/\/)?(www\.)?(discord\.gg|discordapp\.com\/invite)\/\S+/gi;
+// Helper function to get logs channel from DB
+async function getLogsChannel(guildId) {
+  const { data, error } = await supabase
+    .from('server_settings')
+    .select('logs_channel_id')
+    .eq('guild_id', guildId)
+    .single();
 
-  try {
-    const { data: settings } = await supabase
-      .from('server_settings')
-      .select('*')
-      .eq('guild_id', message.guild.id)
-      .single();
+  if (error || !data) return null;
+  return client.guilds.cache.get(guildId).channels.cache.get(data.logs_channel_id);
+}
 
-    if (!settings || message.channel.id === settings.ignored_channel_id) return;
-
-    if (discordInviteRegex.test(message.content)) {
-      if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-        const warning = await message.channel.send({
-          content: `${message.author}, ❌ Invite links are not allowed here!`,
-        });
-        await message.delete().catch(() => {});
-        setTimeout(() => warning.delete().catch(() => {}), 5000);
-      }
-    }
-  } catch (error) {
-    console.error('Error filtering invite links:', error);
-  }
-});
-
-// Login
-client.login(process.env.DISCORD_TOKEN).catch(console.error);
+// Log in to Discord
+client.login(process.env.DISCORD_TOKEN);
