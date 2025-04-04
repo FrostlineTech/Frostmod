@@ -1,0 +1,7 @@
+#Variable File Not to be Committed .env
+# This file contains sensitive information and should not be committed to the repository.
+.env
+
+# This file is used to start the bot and should not be committed to the repository. 
+#if user wants to run the bot, they should create their own file.
+start-bot.bat
