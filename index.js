@@ -18,6 +18,8 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildIntegrations,
+    GatewayIntentBits.GuildPresences,
   ],
 });
 
@@ -83,11 +85,20 @@ const commands = [
       option.setName('channel')
         .setDescription('The channel to send logs')
         .setRequired(true)),
+
+  new SlashCommandBuilder().setName('status')
+    .setDescription('Check the bot\'s uptime and ping.'),
+
+  new SlashCommandBuilder().setName('mutedrole')
+    .setDescription('Set the muted role to be assigned to muted users.')
+    .addRoleOption(option =>
+      option.setName('role')
+        .setDescription('The role to assign to muted users')
+        .setRequired(true)),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
 
-// Register commands
 (async () => {
   try {
     console.log('Started refreshing application (/) commands.');
@@ -101,20 +112,18 @@ const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
   }
 })();
 
-// Bot ready
 client.once('ready', () => {
   console.log(`${client.user.tag} is logged in and ready!`);
 
   client.user.setPresence({
     activities: [{
       name: 'FrostMod - Developed by Dakota',
-      type: 0, // The type of activity (0 is for "Playing")
+      type: 0,
     }],
     status: 'online',
   });
 });
 
-// Member join event
 client.on('guildMemberAdd', async (member) => {
   const guildId = member.guild.id;
   const serverName = member.guild.name;
@@ -128,7 +137,6 @@ client.on('guildMemberAdd', async (member) => {
 
     if (error || !settings) return;
 
-    // Welcome message
     if (settings.welcome_channel_id && settings.welcome_message) {
       const channel = await member.guild.channels.fetch(settings.welcome_channel_id).catch(() => null);
       if (channel) {
@@ -148,7 +156,6 @@ client.on('guildMemberAdd', async (member) => {
       }
     }
 
-    // Auto-role
     if (settings.auto_role_id) {
       const role = member.guild.roles.cache.get(settings.auto_role_id);
       if (role) {
@@ -156,19 +163,87 @@ client.on('guildMemberAdd', async (member) => {
       }
     }
 
-    // Track join in database
     await supabase.from('member_joins').insert({
       guild_id: guildId,
       user_id: member.user.id,
       username: member.user.tag,
       server_name: serverName
     });
+
+    const logsChannel = await getLogsChannel(guildId);
+    if (logsChannel) {
+      const joinEmbed = new EmbedBuilder()
+        .setColor('#00FF00')
+        .setTitle('User Joined')
+        .setDescription(`${member.user.tag} has joined the server.`)
+        .setTimestamp();
+      await logsChannel.send({ embeds: [joinEmbed] });
+    }
   } catch (error) {
     console.error('Error handling member join:', error);
   }
 });
 
-// Slash commands handler
+client.on('guildMemberRemove', async (member) => {
+  const guildId = member.guild.id;
+
+  try {
+    await supabase.from('member_leaves').insert({
+      guild_id: guildId,
+      user_id: member.user.id,
+      username: member.user.tag,
+    });
+
+    const logsChannel = await getLogsChannel(guildId);
+    if (logsChannel) {
+      const leaveEmbed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('User Left')
+        .setDescription(`${member.user.tag} has left the server.`)
+        .setTimestamp();
+      await logsChannel.send({ embeds: [leaveEmbed] });
+    }
+  } catch (error) {
+    console.error('Error handling member leave:', error);
+  }
+});
+
+client.on('channelCreate', async (channel) => {
+  const guildId = channel.guild.id;
+
+  try {
+    const logsChannel = await getLogsChannel(guildId);
+    if (logsChannel) {
+      const channelCreateEmbed = new EmbedBuilder()
+        .setColor('#3498db')
+        .setTitle('Channel Created')
+        .setDescription(`Channel #${channel.name} has been created.`)
+        .setTimestamp();
+      await logsChannel.send({ embeds: [channelCreateEmbed] });
+    }
+  } catch (error) {
+    console.error('Error logging channel creation:', error);
+  }
+});
+
+client.on('channelDelete', async (channel) => {
+  const guildId = channel.guild.id;
+
+  try {
+    const logsChannel = await getLogsChannel(guildId);
+    if (logsChannel) {
+      const channelDeleteEmbed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('Channel Deleted')
+        .setDescription(`Channel #${channel.name} has been deleted.`)
+        .setTimestamp();
+      await logsChannel.send({ embeds: [channelDeleteEmbed] });
+    }
+  } catch (error) {
+    console.error('Error logging channel deletion:', error);
+  }
+});
+
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
 
@@ -225,10 +300,8 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // Add the "Warned by: username" format
       const warnedBy = `Warned by: ${interaction.user.tag}`;
 
-      // Send the warning message to the logs channel
       const warningEmbed = new EmbedBuilder()
         .setColor('#FF0000')
         .setTitle('User Warned')
@@ -241,13 +314,12 @@ client.on('interactionCreate', async (interaction) => {
 
       await logsChannel.send({ embeds: [warningEmbed] });
 
-      // Save the warning to Supabase
       await supabase.from('user_warns').insert([{
         guild_id: guild.id,
         user_id: targetUser.id,
         username: targetUser.tag,
         reason: reason,
-        warned_by: warnedBy, // Store the "Warned by: username"
+        warned_by: warnedBy,
         timestamp: new Date().toISOString(),
       }]);
 
@@ -275,16 +347,48 @@ client.on('interactionCreate', async (interaction) => {
           { name: '🚫 `/filter`', value: 'Set the curse word filter level (light, moderate, strict).' },
           { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
           { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
+          { name: '📊 `/status`', value: 'Check the bot\'s uptime and ping.' },
+          { name: '🔇 `/mute`', value: 'Mute a user to prevent them from sending messages or joining voice channels.' },
+          { name: '🔕 `/mutedrole`', value: 'Set the muted role that will be assigned to muted users.' }
         );
       await interaction.reply({ embeds: [helpEmbed] });
     }
+
+    if (commandName === 'status') {
+      const uptimeMs = client.uptime;
+      const uptimeSeconds = Math.floor(uptimeMs / 1000) % 60;
+      const uptimeMinutes = Math.floor(uptimeMs / (1000 * 60)) % 60;
+      const uptimeHours = Math.floor(uptimeMs / (1000 * 60 * 60)) % 24;
+      const uptimeDays = Math.floor(uptimeMs / (1000 * 60 * 60 * 24));
+
+      const uptimeString = `${uptimeDays}d ${uptimeHours}h ${uptimeMinutes}m ${uptimeSeconds}s`;
+
+      const embed = new EmbedBuilder()
+        .setColor('#00BFFF')
+        .setTitle('📊 Bot Status')
+        .addFields(
+          { name: '🕒 Uptime', value: uptimeString, inline: true },
+          { name: '📡 Ping', value: `${client.ws.ping}ms`, inline: true }
+        )
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [embed] });
+    }
+
+    if (commandName === 'mutedrole') {
+      const role = interaction.options.getRole('role');
+      await supabase
+        .from('server_settings')
+        .upsert({ guild_id: guild.id, muted_role_id: role.id }, { onConflict: ['guild_id'] });
+      await interaction.reply(`✅ Muted role set to ${role}.`);
+    }
+
   } catch (error) {
     console.error('Error handling slash command:', error);
     await interaction.reply('❌ An error occurred while processing your command.').catch(() => {});
   }
 });
 
-// Helper function to get logs channel from DB
 async function getLogsChannel(guildId) {
   const { data, error } = await supabase
     .from('server_settings')
@@ -292,9 +396,10 @@ async function getLogsChannel(guildId) {
     .eq('guild_id', guildId)
     .single();
 
-  if (error || !data) return null;
-  return client.guilds.cache.get(guildId).channels.cache.get(data.logs_channel_id);
+  if (error || !data || !data.logs_channel_id) return null;
+
+  const channel = await client.channels.fetch(data.logs_channel_id).catch(() => null);
+  return channel;
 }
 
-// Log in to Discord
 client.login(process.env.DISCORD_TOKEN);
