@@ -95,6 +95,22 @@ const commands = [
       option.setName('role')
         .setDescription('The role to assign to muted users')
         .setRequired(true)),
+
+  // New mute command
+  new SlashCommandBuilder().setName('mute')
+    .setDescription('Mute a user to prevent them from sending messages.')
+    .addUserOption(option =>
+      option.setName('user')
+        .setDescription('The user to mute')
+        .setRequired(true))
+    .addStringOption(option =>
+      option.setName('reason')
+        .setDescription('The reason for muting')
+        .setRequired(false))
+    .addIntegerOption(option =>
+      option.setName('duration')
+        .setDescription('Duration of mute in minutes (0 for permanent)')
+        .setRequired(false)),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -247,7 +263,7 @@ client.on('channelDelete', async (channel) => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
 
-  const { commandName, guild } = interaction;
+  const { commandName, guild, options } = interaction;
 
   try {
     if (commandName === 'welcome') {
@@ -348,7 +364,7 @@ client.on('interactionCreate', async (interaction) => {
           { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
           { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
           { name: '📊 `/status`', value: 'Check the bot\'s uptime and ping.' },
-          { name: '🔇 `/mute`', value: 'Mute a user to prevent them from sending messages or joining voice channels.' },
+          { name: '🔇 `/mute`', value: 'Mute a user to prevent them from sending messages.' },
           { name: '🔕 `/mutedrole`', value: 'Set the muted role that will be assigned to muted users.' }
         );
       await interaction.reply({ embeds: [helpEmbed] });
@@ -381,6 +397,126 @@ client.on('interactionCreate', async (interaction) => {
         .from('server_settings')
         .upsert({ guild_id: guild.id, muted_role_id: role.id }, { onConflict: ['guild_id'] });
       await interaction.reply(`✅ Muted role set to ${role}.`);
+    }
+
+    if (commandName === 'mute') {
+      // Check if user has permission to mute members
+      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+        return interaction.reply({ content: '❌ You do not have permission to mute members.', ephemeral: true });
+      }
+
+      const user = options.getUser('user');
+      const reason = options.getString('reason') || 'No reason provided';
+      const duration = options.getInteger('duration') || 0; // 0 means permanent mute
+
+      // Get the muted role from database
+      const { data: settings, error: settingsError } = await supabase
+        .from('server_settings')
+        .select('muted_role_id')
+        .eq('guild_id', guild.id)
+        .single();
+
+      if (settingsError || !settings || !settings.muted_role_id) {
+        return interaction.reply({ content: '❌ Muted role is not set up. Please set a muted role first with `/mutedrole`.', ephemeral: true });
+      }
+
+      const mutedRole = guild.roles.cache.get(settings.muted_role_id);
+      if (!mutedRole) {
+        return interaction.reply({ content: '❌ Muted role not found. Please set a new muted role with `/mutedrole`.', ephemeral: true });
+      }
+
+      const member = await guild.members.fetch(user.id).catch(() => null);
+      if (!member) {
+        return interaction.reply({ content: '❌ User not found in this server.', ephemeral: true });
+      }
+
+      // Check if user is already muted
+      if (member.roles.cache.has(mutedRole.id)) {
+        return interaction.reply({ content: '❌ This user is already muted.', ephemeral: true });
+      }
+
+      // Add muted role to user
+      try {
+        await member.roles.add(mutedRole);
+
+        // Save mute to database
+        const { error: muteError } = await supabase
+          .from('muted_roles')
+          .insert({
+            guild_id: guild.id,
+            user_id: user.id,
+            username: user.tag,
+            muted_by: interaction.user.tag,
+            reason: reason,
+            duration: duration,
+            muted_at: new Date().toISOString(),
+            expires_at: duration > 0 ? new Date(Date.now() + duration * 60000).toISOString() : null
+          });
+
+        if (muteError) {
+          console.error('Error saving mute to database:', muteError);
+          return interaction.reply({ content: '❌ Failed to save mute to database.', ephemeral: true });
+        }
+
+        // Send confirmation message
+        const muteEmbed = new EmbedBuilder()
+          .setColor('#FFA500')
+          .setTitle('User Muted')
+          .setDescription(`${user.tag} has been muted.`)
+          .addFields(
+            { name: 'Reason', value: reason, inline: true },
+            { name: 'Duration', value: duration > 0 ? `${duration} minutes` : 'Permanent', inline: true },
+            { name: 'Moderator', value: interaction.user.tag, inline: true }
+          )
+          .setTimestamp();
+
+        await interaction.reply({ embeds: [muteEmbed] });
+
+        // Log the mute action
+        const logsChannel = await getLogsChannel(guild.id);
+        if (logsChannel) {
+          await logsChannel.send({ embeds: [muteEmbed] });
+        }
+
+        // If temporary mute, set timeout to unmute
+        if (duration > 0) {
+          setTimeout(async () => {
+            try {
+              // Check if user is still in the server
+              const currentMember = await guild.members.fetch(user.id).catch(() => null);
+              if (currentMember && currentMember.roles.cache.has(mutedRole.id)) {
+                await currentMember.roles.remove(mutedRole);
+                
+                // Update database
+                await supabase
+                  .from('muted_roles')
+                  .update({ unmuted_at: new Date().toISOString(), expired: true })
+                  .eq('guild_id', guild.id)
+                  .eq('user_id', user.id)
+                  .order('muted_at', { ascending: false })
+                  .limit(1);
+
+                // Send unmute notification
+                const unmuteEmbed = new EmbedBuilder()
+                  .setColor('#00FF00')
+                  .setTitle('User Automatically Unmuted')
+                  .setDescription(`${user.tag} has been automatically unmuted after ${duration} minutes.`)
+                  .setTimestamp();
+
+                if (logsChannel) {
+                  await logsChannel.send({ embeds: [unmuteEmbed] });
+                }
+              }
+            } catch (error) {
+              console.error('Error auto-unmuting user:', error);
+            }
+          }, duration * 60000);
+        }
+
+      } catch (error) {
+        console.error('Error muting user:', error);
+        await interaction.reply({ content: '❌ Failed to mute user. Please check bot permissions.', ephemeral: true });
+      }
     }
 
   } catch (error) {
