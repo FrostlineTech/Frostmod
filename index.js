@@ -105,7 +105,7 @@ const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
 
 // Bot ready
 client.once('ready', () => {
-  console.log(${client.user.tag} is logged in and ready!);
+  console.log(`${client.user.tag} is logged in and ready!`);
 
   client.user.setPresence({
     activities: [{
@@ -143,7 +143,7 @@ client.on('guildMemberAdd', async (member) => {
           .setTitle('🎉 Welcome!')
           .setDescription(personalizedMessage)
           .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
-          .setFooter({ text: Member #${member.guild.memberCount} })
+          .setFooter({ text: `Member #${member.guild.memberCount}` })
           .setTimestamp();
 
         await channel.send({ embeds: [embed] });
@@ -172,7 +172,7 @@ client.on('guildMemberAdd', async (member) => {
       const joinEmbed = new EmbedBuilder()
         .setColor('#00FF00')
         .setTitle('User Joined')
-        .setDescription(${member.user.tag} has joined the server.)
+        .setDescription(`${member.user.tag} has joined the server.`)
         .setTimestamp();
       await logsChannel.send({ embeds: [joinEmbed] });
     }
@@ -198,7 +198,7 @@ client.on('guildMemberRemove', async (member) => {
       const leaveEmbed = new EmbedBuilder()
         .setColor('#FF0000')
         .setTitle('User Left')
-        .setDescription(${member.user.tag} has left the server.)
+        .setDescription(`${member.user.tag} has left the server.`)
         .setTimestamp();
       await logsChannel.send({ embeds: [leaveEmbed] });
     }
@@ -217,7 +217,7 @@ client.on('channelCreate', async (channel) => {
       const channelCreateEmbed = new EmbedBuilder()
         .setColor('#3498db')
         .setTitle('Channel Created')
-        .setDescription(Channel #${channel.name} has been created.)
+        .setDescription(`Channel #${channel.name} has been created.`)
         .setTimestamp();
       await logsChannel.send({ embeds: [channelCreateEmbed] });
     }
@@ -235,7 +235,7 @@ client.on('channelDelete', async (channel) => {
       const channelDeleteEmbed = new EmbedBuilder()
         .setColor('#FF0000')
         .setTitle('Channel Deleted')
-        .setDescription(Channel #${channel.name} has been deleted.)
+        .setDescription(`Channel #${channel.name} has been deleted.`)
         .setTimestamp();
       await logsChannel.send({ embeds: [channelDeleteEmbed] });
     }
@@ -256,7 +256,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, welcome_channel_id: channel.id }, { onConflict: ['guild_id'] });
-      await interaction.reply(✅ Welcome channel set to ${channel}.);
+      await interaction.reply(`✅ Welcome channel set to ${channel}.`);
     }
 
     if (commandName === 'wmessage') {
@@ -264,7 +264,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, welcome_message: message }, { onConflict: ['guild_id'] });
-      await interaction.reply(✅ Welcome message set: "${message}");
+      await interaction.reply(`✅ Welcome message set: "${message}"`);
     }
 
     if (commandName === 'joinrole') {
@@ -272,7 +272,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, auto_role_id: role.id }, { onConflict: ['guild_id'] });
-      await interaction.reply(✅ New members will be assigned ${role}.);
+      await interaction.reply(`✅ New members will be assigned ${role}.`);
     }
 
     if (commandName === 'ignorelinks') {
@@ -280,7 +280,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, ignored_channel_id: channel.id }, { onConflict: ['guild_id'] });
-      await interaction.reply(✅ Invite links will be ignored in ${channel}.);
+      await interaction.reply(`✅ Invite links will be ignored in ${channel}.`);
     }
 
     if (commandName === 'filter') {
@@ -288,7 +288,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('filtering_settings')
         .upsert({ guild_id: guild.id, filter_level: filterLevel }, { onConflict: ['guild_id'] });
-      await interaction.reply(✅ Filter level set to ${filterLevel}.);
+      await interaction.reply(`✅ Filter level set to ${filterLevel}.`);
     }
 
     if (commandName === 'warn') {
@@ -297,18 +297,18 @@ client.on('interactionCreate', async (interaction) => {
       const logsChannel = await getLogsChannel(guild.id);
 
       if (!logsChannel) {
-        await interaction.reply('⚠️ No logs channel set. Please set a logs channel using /logs command.');
+        await interaction.reply('⚠️ No logs channel set. Please set a logs channel using `/logs` command.');
         return;
       }
 
       // Add the "Warned by: username" format
-      const warnedBy = Warned by: ${interaction.user.tag};
+      const warnedBy = `Warned by: ${interaction.user.tag}`;
 
       // Send the warning message to the logs channel
       const warningEmbed = new EmbedBuilder()
         .setColor('#FF0000')
         .setTitle('User Warned')
-        .setDescription(${targetUser.tag} was warned.)
+        .setDescription(`${targetUser.tag} was warned.`)
         .addFields(
           { name: 'Reason', value: reason },
           { name: 'Warned by', value: warnedBy }
@@ -328,7 +328,7 @@ client.on('interactionCreate', async (interaction) => {
       }]);
 
 
-      await interaction.reply(✅ ${targetUser.tag} has been warned for: ${reason});
+      await interaction.reply(`✅ ${targetUser.tag} has been warned for: ${reason}`);
     }
 
     if (commandName === 'logs') {
@@ -336,7 +336,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, logs_channel_id: channel.id }, { onConflict: ['guild_id'] });
-      await interaction.reply(✅ Logs channel set to ${channel}.);
+      await interaction.reply(`✅ Logs channel set to ${channel}.`);
     }
 
     if (commandName === 'help') {
@@ -345,13 +345,13 @@ client.on('interactionCreate', async (interaction) => {
         .setTitle('FrostMod Commands')
         .setDescription('A moderation bot with welcome messages and invite link filtering.')
         .addFields(
-          { name: '🛠️ /welcome', value: 'Set the welcome channel for new members.' },
-          { name: '💬 /wmessage', value: 'Set the welcome message (supports {user} and {memberCount}).' },
-          { name: '🧑‍🤝‍🧑 /joinrole', value: 'Set an auto-role for new members.' },
-          { name: '🔒 /ignorelinks', value: 'Allow invite links in a specific channel.' },
-          { name: '🚫 /filter', value: 'Set the curse word filter level (light, moderate, strict).' },
-          { name: '⚠️ /warn', value: 'Warn a user for inappropriate behavior.' },
-          { name: '📜 /logs', value: 'Set the logs channel for user warnings.' },
+          { name: '🛠️ `/welcome`', value: 'Set the welcome channel for new members.' },
+          { name: '💬 `/wmessage`', value: 'Set the welcome message (supports `{user}` and `{memberCount}`).' },
+          { name: '🧑‍🤝‍🧑 `/joinrole`', value: 'Set an auto-role for new members.' },
+          { name: '🔒 `/ignorelinks`', value: 'Allow invite links in a specific channel.' },
+          { name: '🚫 `/filter`', value: 'Set the curse word filter level (light, moderate, strict).' },
+          { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
+          { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
         );
       await interaction.reply({ embeds: [helpEmbed] });
     }
