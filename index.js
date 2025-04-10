@@ -85,36 +85,11 @@ const commands = [
       option.setName('channel')
         .setDescription('The channel to send logs')
         .setRequired(true)),
-
-  new SlashCommandBuilder().setName('status')
-    .setDescription('Check the bot\'s uptime and ping.'),
-
-  new SlashCommandBuilder().setName('mutedrole')
-    .setDescription('Set the muted role to be assigned to muted users.')
-    .addRoleOption(option =>
-      option.setName('role')
-        .setDescription('The role to assign to muted users')
-        .setRequired(true)),
-
-  // New mute command
-  new SlashCommandBuilder().setName('mute')
-    .setDescription('Mute a user to prevent them from sending messages.')
-    .addUserOption(option =>
-      option.setName('user')
-        .setDescription('The user to mute')
-        .setRequired(true))
-    .addStringOption(option =>
-      option.setName('reason')
-        .setDescription('The reason for muting')
-        .setRequired(false))
-    .addIntegerOption(option =>
-      option.setName('duration')
-        .setDescription('Duration of mute in minutes (0 for permanent)')
-        .setRequired(false)),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
 
+// Register commands
 (async () => {
   try {
     console.log('Started refreshing application (/) commands.');
@@ -128,18 +103,20 @@ const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
   }
 })();
 
+// Bot ready
 client.once('ready', () => {
-  console.log(`${client.user.tag} is logged in and ready!`);
+  console.log(${client.user.tag} is logged in and ready!);
 
   client.user.setPresence({
     activities: [{
       name: 'FrostMod - Developed by Dakota',
-      type: 0,
+      type: 0, // The type of activity (0 is for "Playing")
     }],
     status: 'online',
   });
 });
 
+// Member join and leave events
 client.on('guildMemberAdd', async (member) => {
   const guildId = member.guild.id;
   const serverName = member.guild.name;
@@ -153,6 +130,7 @@ client.on('guildMemberAdd', async (member) => {
 
     if (error || !settings) return;
 
+    // Welcome message
     if (settings.welcome_channel_id && settings.welcome_message) {
       const channel = await member.guild.channels.fetch(settings.welcome_channel_id).catch(() => null);
       if (channel) {
@@ -165,13 +143,14 @@ client.on('guildMemberAdd', async (member) => {
           .setTitle('🎉 Welcome!')
           .setDescription(personalizedMessage)
           .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
-          .setFooter({ text: `Member #${member.guild.memberCount}` })
+          .setFooter({ text: Member #${member.guild.memberCount} })
           .setTimestamp();
 
         await channel.send({ embeds: [embed] });
       }
     }
 
+    // Auto-role
     if (settings.auto_role_id) {
       const role = member.guild.roles.cache.get(settings.auto_role_id);
       if (role) {
@@ -179,6 +158,7 @@ client.on('guildMemberAdd', async (member) => {
       }
     }
 
+    // Track join in database
     await supabase.from('member_joins').insert({
       guild_id: guildId,
       user_id: member.user.id,
@@ -186,12 +166,13 @@ client.on('guildMemberAdd', async (member) => {
       server_name: serverName
     });
 
+    // Log the user join
     const logsChannel = await getLogsChannel(guildId);
     if (logsChannel) {
       const joinEmbed = new EmbedBuilder()
         .setColor('#00FF00')
         .setTitle('User Joined')
-        .setDescription(`${member.user.tag} has joined the server.`)
+        .setDescription(${member.user.tag} has joined the server.)
         .setTimestamp();
       await logsChannel.send({ embeds: [joinEmbed] });
     }
@@ -204,18 +185,20 @@ client.on('guildMemberRemove', async (member) => {
   const guildId = member.guild.id;
 
   try {
+    // Track leave in database
     await supabase.from('member_leaves').insert({
       guild_id: guildId,
       user_id: member.user.id,
       username: member.user.tag,
     });
 
+    // Log the user leave
     const logsChannel = await getLogsChannel(guildId);
     if (logsChannel) {
       const leaveEmbed = new EmbedBuilder()
         .setColor('#FF0000')
         .setTitle('User Left')
-        .setDescription(`${member.user.tag} has left the server.`)
+        .setDescription(${member.user.tag} has left the server.)
         .setTimestamp();
       await logsChannel.send({ embeds: [leaveEmbed] });
     }
@@ -224,6 +207,7 @@ client.on('guildMemberRemove', async (member) => {
   }
 });
 
+// Channel creation and deletion
 client.on('channelCreate', async (channel) => {
   const guildId = channel.guild.id;
 
@@ -233,7 +217,7 @@ client.on('channelCreate', async (channel) => {
       const channelCreateEmbed = new EmbedBuilder()
         .setColor('#3498db')
         .setTitle('Channel Created')
-        .setDescription(`Channel #${channel.name} has been created.`)
+        .setDescription(Channel #${channel.name} has been created.)
         .setTimestamp();
       await logsChannel.send({ embeds: [channelCreateEmbed] });
     }
@@ -251,7 +235,7 @@ client.on('channelDelete', async (channel) => {
       const channelDeleteEmbed = new EmbedBuilder()
         .setColor('#FF0000')
         .setTitle('Channel Deleted')
-        .setDescription(`Channel #${channel.name} has been deleted.`)
+        .setDescription(Channel #${channel.name} has been deleted.)
         .setTimestamp();
       await logsChannel.send({ embeds: [channelDeleteEmbed] });
     }
@@ -260,10 +244,11 @@ client.on('channelDelete', async (channel) => {
   }
 });
 
+// Slash commands handler
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
 
-  const { commandName, guild, options } = interaction;
+  const { commandName, guild } = interaction;
 
   try {
     if (commandName === 'welcome') {
@@ -271,7 +256,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, welcome_channel_id: channel.id }, { onConflict: ['guild_id'] });
-      await interaction.reply(`✅ Welcome channel set to ${channel}.`);
+      await interaction.reply(✅ Welcome channel set to ${channel}.);
     }
 
     if (commandName === 'wmessage') {
@@ -279,7 +264,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, welcome_message: message }, { onConflict: ['guild_id'] });
-      await interaction.reply(`✅ Welcome message set: "${message}"`);
+      await interaction.reply(✅ Welcome message set: "${message}");
     }
 
     if (commandName === 'joinrole') {
@@ -287,7 +272,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, auto_role_id: role.id }, { onConflict: ['guild_id'] });
-      await interaction.reply(`✅ New members will be assigned ${role}.`);
+      await interaction.reply(✅ New members will be assigned ${role}.);
     }
 
     if (commandName === 'ignorelinks') {
@@ -295,7 +280,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, ignored_channel_id: channel.id }, { onConflict: ['guild_id'] });
-      await interaction.reply(`✅ Invite links will be ignored in ${channel}.`);
+      await interaction.reply(✅ Invite links will be ignored in ${channel}.);
     }
 
     if (commandName === 'filter') {
@@ -303,7 +288,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('filtering_settings')
         .upsert({ guild_id: guild.id, filter_level: filterLevel }, { onConflict: ['guild_id'] });
-      await interaction.reply(`✅ Filter level set to ${filterLevel}.`);
+      await interaction.reply(✅ Filter level set to ${filterLevel}.);
     }
 
     if (commandName === 'warn') {
@@ -312,16 +297,18 @@ client.on('interactionCreate', async (interaction) => {
       const logsChannel = await getLogsChannel(guild.id);
 
       if (!logsChannel) {
-        await interaction.reply('⚠️ No logs channel set. Please set a logs channel using `/logs` command.');
+        await interaction.reply('⚠️ No logs channel set. Please set a logs channel using /logs command.');
         return;
       }
 
-      const warnedBy = `Warned by: ${interaction.user.tag}`;
+      // Add the "Warned by: username" format
+      const warnedBy = Warned by: ${interaction.user.tag};
 
+      // Send the warning message to the logs channel
       const warningEmbed = new EmbedBuilder()
         .setColor('#FF0000')
         .setTitle('User Warned')
-        .setDescription(`${targetUser.tag} was warned.`)
+        .setDescription(${targetUser.tag} was warned.)
         .addFields(
           { name: 'Reason', value: reason },
           { name: 'Warned by', value: warnedBy }
@@ -330,16 +317,18 @@ client.on('interactionCreate', async (interaction) => {
 
       await logsChannel.send({ embeds: [warningEmbed] });
 
+      // Save the warning to Supabase
       await supabase.from('user_warns').insert([{
         guild_id: guild.id,
         user_id: targetUser.id,
         username: targetUser.tag,
         reason: reason,
-        warned_by: warnedBy,
+        warned_by: warnedBy, // Store the "Warned by: username"
         timestamp: new Date().toISOString(),
       }]);
 
-      await interaction.reply(`✅ ${targetUser.tag} has been warned for: ${reason}`);
+
+      await interaction.reply(✅ ${targetUser.tag} has been warned for: ${reason});
     }
 
     if (commandName === 'logs') {
@@ -347,7 +336,7 @@ client.on('interactionCreate', async (interaction) => {
       await supabase
         .from('server_settings')
         .upsert({ guild_id: guild.id, logs_channel_id: channel.id }, { onConflict: ['guild_id'] });
-      await interaction.reply(`✅ Logs channel set to ${channel}.`);
+      await interaction.reply(✅ Logs channel set to ${channel}.);
     }
 
     if (commandName === 'help') {
@@ -356,175 +345,23 @@ client.on('interactionCreate', async (interaction) => {
         .setTitle('FrostMod Commands')
         .setDescription('A moderation bot with welcome messages and invite link filtering.')
         .addFields(
-          { name: '🛠️ `/welcome`', value: 'Set the welcome channel for new members.' },
-          { name: '💬 `/wmessage`', value: 'Set the welcome message (supports `{user}` and `{memberCount}`).' },
-          { name: '🧑‍🤝‍🧑 `/joinrole`', value: 'Set an auto-role for new members.' },
-          { name: '🔒 `/ignorelinks`', value: 'Allow invite links in a specific channel.' },
-          { name: '🚫 `/filter`', value: 'Set the curse word filter level (light, moderate, strict).' },
-          { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
-          { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
-          { name: '📊 `/status`', value: 'Check the bot\'s uptime and ping.' },
-          { name: '🔇 `/mute`', value: 'Mute a user to prevent them from sending messages.' },
-          { name: '🔕 `/mutedrole`', value: 'Set the muted role that will be assigned to muted users.' }
+          { name: '🛠️ /welcome', value: 'Set the welcome channel for new members.' },
+          { name: '💬 /wmessage', value: 'Set the welcome message (supports {user} and {memberCount}).' },
+          { name: '🧑‍🤝‍🧑 /joinrole', value: 'Set an auto-role for new members.' },
+          { name: '🔒 /ignorelinks', value: 'Allow invite links in a specific channel.' },
+          { name: '🚫 /filter', value: 'Set the curse word filter level (light, moderate, strict).' },
+          { name: '⚠️ /warn', value: 'Warn a user for inappropriate behavior.' },
+          { name: '📜 /logs', value: 'Set the logs channel for user warnings.' },
         );
       await interaction.reply({ embeds: [helpEmbed] });
     }
-
-    if (commandName === 'status') {
-      const uptimeMs = client.uptime;
-      const uptimeSeconds = Math.floor(uptimeMs / 1000) % 60;
-      const uptimeMinutes = Math.floor(uptimeMs / (1000 * 60)) % 60;
-      const uptimeHours = Math.floor(uptimeMs / (1000 * 60 * 60)) % 24;
-      const uptimeDays = Math.floor(uptimeMs / (1000 * 60 * 60 * 24));
-
-      const uptimeString = `${uptimeDays}d ${uptimeHours}h ${uptimeMinutes}m ${uptimeSeconds}s`;
-
-      const embed = new EmbedBuilder()
-        .setColor('#00BFFF')
-        .setTitle('📊 Bot Status')
-        .addFields(
-          { name: '🕒 Uptime', value: uptimeString, inline: true },
-          { name: '📡 Ping', value: `${client.ws.ping}ms`, inline: true }
-        )
-        .setTimestamp();
-
-      await interaction.reply({ embeds: [embed] });
-    }
-
-    if (commandName === 'mutedrole') {
-      const role = interaction.options.getRole('role');
-      await supabase
-        .from('server_settings')
-        .upsert({ guild_id: guild.id, muted_role_id: role.id }, { onConflict: ['guild_id'] });
-      await interaction.reply(`✅ Muted role set to ${role}.`);
-    }
-
-    if (commandName === 'mute') {
-      // Check if user has permission to mute members
-      if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-        return interaction.reply({ content: '❌ You do not have permission to mute members.', ephemeral: true });
-      }
-
-      const user = options.getUser('user');
-      const reason = options.getString('reason') || 'No reason provided';
-      const duration = options.getInteger('duration') || 0; // 0 means permanent mute
-
-      // Get the muted role from database
-      const { data: settings, error: settingsError } = await supabase
-        .from('server_settings')
-        .select('muted_role_id')
-        .eq('guild_id', guild.id)
-        .single();
-
-      if (settingsError || !settings || !settings.muted_role_id) {
-        return interaction.reply({ content: '❌ Muted role is not set up. Please set a muted role first with `/mutedrole`.', ephemeral: true });
-      }
-
-      const mutedRole = guild.roles.cache.get(settings.muted_role_id);
-      if (!mutedRole) {
-        return interaction.reply({ content: '❌ Muted role not found. Please set a new muted role with `/mutedrole`.', ephemeral: true });
-      }
-
-      const member = await guild.members.fetch(user.id).catch(() => null);
-      if (!member) {
-        return interaction.reply({ content: '❌ User not found in this server.', ephemeral: true });
-      }
-
-      // Check if user is already muted
-      if (member.roles.cache.has(mutedRole.id)) {
-        return interaction.reply({ content: '❌ This user is already muted.', ephemeral: true });
-      }
-
-      // Add muted role to user
-      try {
-        await member.roles.add(mutedRole);
-
-        // Save mute to database
-        const { error: muteError } = await supabase
-          .from('muted_roles')
-          .insert({
-            guild_id: guild.id,
-            user_id: user.id,
-            username: user.tag,
-            muted_by: interaction.user.tag,
-            reason: reason,
-            duration: duration,
-            muted_at: new Date().toISOString(),
-            expires_at: duration > 0 ? new Date(Date.now() + duration * 60000).toISOString() : null
-          });
-
-        if (muteError) {
-          console.error('Error saving mute to database:', muteError);
-          return interaction.reply({ content: '❌ Failed to save mute to database.', ephemeral: true });
-        }
-
-        // Send confirmation message
-        const muteEmbed = new EmbedBuilder()
-          .setColor('#FFA500')
-          .setTitle('User Muted')
-          .setDescription(`${user.tag} has been muted.`)
-          .addFields(
-            { name: 'Reason', value: reason, inline: true },
-            { name: 'Duration', value: duration > 0 ? `${duration} minutes` : 'Permanent', inline: true },
-            { name: 'Moderator', value: interaction.user.tag, inline: true }
-          )
-          .setTimestamp();
-
-        await interaction.reply({ embeds: [muteEmbed] });
-
-        // Log the mute action
-        const logsChannel = await getLogsChannel(guild.id);
-        if (logsChannel) {
-          await logsChannel.send({ embeds: [muteEmbed] });
-        }
-
-        // If temporary mute, set timeout to unmute
-        if (duration > 0) {
-          setTimeout(async () => {
-            try {
-              // Check if user is still in the server
-              const currentMember = await guild.members.fetch(user.id).catch(() => null);
-              if (currentMember && currentMember.roles.cache.has(mutedRole.id)) {
-                await currentMember.roles.remove(mutedRole);
-                
-                // Update database
-                await supabase
-                  .from('muted_roles')
-                  .update({ unmuted_at: new Date().toISOString(), expired: true })
-                  .eq('guild_id', guild.id)
-                  .eq('user_id', user.id)
-                  .order('muted_at', { ascending: false })
-                  .limit(1);
-
-                // Send unmute notification
-                const unmuteEmbed = new EmbedBuilder()
-                  .setColor('#00FF00')
-                  .setTitle('User Automatically Unmuted')
-                  .setDescription(`${user.tag} has been automatically unmuted after ${duration} minutes.`)
-                  .setTimestamp();
-
-                if (logsChannel) {
-                  await logsChannel.send({ embeds: [unmuteEmbed] });
-                }
-              }
-            } catch (error) {
-              console.error('Error auto-unmuting user:', error);
-            }
-          }, duration * 60000);
-        }
-
-      } catch (error) {
-        console.error('Error muting user:', error);
-        await interaction.reply({ content: '❌ Failed to mute user. Please check bot permissions.', ephemeral: true });
-      }
-    }
-
   } catch (error) {
     console.error('Error handling slash command:', error);
     await interaction.reply('❌ An error occurred while processing your command.').catch(() => {});
   }
 });
 
+// Helper function to get logs channel from DB
 async function getLogsChannel(guildId) {
   const { data, error } = await supabase
     .from('server_settings')
@@ -538,4 +375,5 @@ async function getLogsChannel(guildId) {
   return channel;
 }
 
+// Log in the bot
 client.login(process.env.DISCORD_TOKEN);
