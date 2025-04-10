@@ -1,6 +1,6 @@
 {
   "name": "frostmod",
-  "version": "1.0.0",
+  "version": "1.0.0",  
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -19,3 +19,4 @@
     "dotenv": "^16.4.7"
   }
 }
+

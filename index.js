@@ -8,6 +8,14 @@ const { createClient } = require('@supabase/supabase-js');
 
 dotenv.config();
 
+// Version and build info
+const BOT_VERSION = '1.0.0';  // Change from beta versioning
+const BOT_INFO = {
+  name: 'FrostMod',
+  version: BOT_VERSION,
+  developer: 'Dakota'
+};
+
 // Initialize Supabase
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
@@ -85,6 +93,9 @@ const commands = [
       option.setName('channel')
         .setDescription('The channel to send logs')
         .setRequired(true)),
+
+  new SlashCommandBuilder().setName('status')
+    .setDescription('Shows the bot\'s current status, ping, and uptime'),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -109,8 +120,8 @@ client.once('ready', () => {
 
   client.user.setPresence({
     activities: [{
-      name: 'FrostMod - Developed by Dakota',
-      type: 0, // The type of activity (0 is for "Playing")
+      name: `FrostMod v${BOT_VERSION}`,  // Remove any beta indicators
+      type: 0,
     }],
     status: 'online',
   });
@@ -352,12 +363,43 @@ client.on('interactionCreate', async (interaction) => {
           { name: '🚫 `/filter`', value: 'Set the curse word filter level (light, moderate, strict).' },
           { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
           { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
+          { name: '📊 `/status`', value: 'Shows bot\'s current status, ping, and uptime.' }
         );
       await interaction.reply({ embeds: [helpEmbed] });
     }
+
+    if (commandName === 'status') {
+      const ping = client.ws.ping;
+      const uptime = Math.floor(client.uptime / 1000); // Convert to seconds
+
+      // Calculate readable uptime
+      const days = Math.floor(uptime / 86400);
+      const hours = Math.floor((uptime % 86400) / 3600);
+      const minutes = Math.floor((uptime % 3600) / 60);
+      const seconds = uptime % 60;
+
+      const uptimeString = [
+        days ? `${days}d` : '',
+        hours ? `${hours}h` : '',
+        minutes ? `${minutes}m` : '',
+        `${seconds}s`
+      ].filter(Boolean).join(' ');
+
+      const statusEmbed = new EmbedBuilder()
+        .setColor('#00FF00')
+        .setTitle('🤖 Bot Status')
+        .addFields(
+          { name: '📡 Ping', value: `${ping}ms`, inline: true },
+          { name: '⏰ Uptime', value: uptimeString, inline: true },
+          { name: '🔌 Connection', value: client.ws.status === 0 ? 'Connected' : 'Reconnecting', inline: true }
+        )
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [statusEmbed] });
+    }
   } catch (error) {
     console.error('Error handling slash command:', error);
-    await interaction.reply('❌ An error occurred while processing your command.').catch(() => {});
+    await interaction.reply('❌ An error occurred while processing your command.');
   }
 });
 
