@@ -1,45 +1,31 @@
 // FrostMod - An AutoMod Bot for Discord
-const { 
-  Client, 
-  GatewayIntentBits, 
-  EmbedBuilder, 
-  PermissionsBitField 
-} = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField } = require('discord.js');
+const dotenv = require('dotenv');
 const { SlashCommandBuilder } = require('@discordjs/builders');
 const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v9');
 const { createClient } = require('@supabase/supabase-js');
 const { HfInference } = require('@huggingface/inference');
-const dotenv = require('dotenv');
 
 dotenv.config();
 
-// Initialize Hugging Face client
+// Initialize Supabase
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// Initialize HuggingFace client
 const hf = new HfInference(process.env.HUGGING_FACE_TOKEN);
 
-// Initialize Discord client with proper intents
-const client = new Client({ 
+// Bot setup
+const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.MessageContent
-  ]
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildIntegrations,
+    GatewayIntentBits.GuildPresences,
+  ],
 });
-
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
-
-// Version and build info
-const BOT_VERSION = '1.0.0';
-const BOT_INFO = {
-  name: 'FrostMod',
-  version: BOT_VERSION,
-  developer: 'Dakota'
-};
 
 // Register slash commands
 const commands = [
@@ -55,6 +41,20 @@ const commands = [
     .addStringOption(option =>
       option.setName('message')
         .setDescription('The welcome message (use {user} and {memberCount} for placeholders)')
+        .setRequired(true)),
+
+  new SlashCommandBuilder().setName('joinrole')
+    .setDescription('Set the auto-role that new members receive.')
+    .addRoleOption(option =>
+      option.setName('role')
+        .setDescription('The role to assign to new members')
+        .setRequired(true)),
+
+  new SlashCommandBuilder().setName('ignorelinks')
+    .setDescription('Set a channel where invite links are ignored by the filter.')
+    .addChannelOption(option =>
+      option.setName('channel')
+        .setDescription('The channel to ignore the link filter')
         .setRequired(true)),
 
   new SlashCommandBuilder().setName('filter')
@@ -83,15 +83,22 @@ const commands = [
         .setDescription('The reason for the warning')
         .setRequired(true)),
 
+  new SlashCommandBuilder().setName('logs')
+    .setDescription('Set the channel for warning logs.')
+    .addChannelOption(option =>
+      option.setName('channel')
+        .setDescription('The channel to send logs')
+        .setRequired(true)),
+
   new SlashCommandBuilder().setName('status')
     .setDescription('Shows the bot\'s current status, ping, and uptime'),
+
   new SlashCommandBuilder()
-    .setName('analyze')
-    .setDescription('Analyze a message for toxicity and sentiment')
-    .setDefaultMemberPermissions(PermissionsBitField.Flags.ModerateMembers)
+    .setName('ask')
+    .setDescription('Ask the AI a question')
     .addStringOption(option =>
-      option.setName('message')
-        .setDescription('The message to analyze')
+      option.setName('question')
+        .setDescription('What would you like to ask?')
         .setRequired(true)),
 ].map(command => command.toJSON());
 
@@ -117,61 +124,76 @@ client.once('ready', () => {
 
   client.user.setPresence({
     activities: [{
-      name: `FrostMod v${BOT_VERSION}`,  // Remove any beta indicators
-      type: 0,
+      name: 'ver 1.0.0 - Developed by Dakota',
+      type: 0, // The type of activity (0 is for "Playing")
     }],
     status: 'online',
   });
 });
 
 // Member join and leave events
-async function generateWelcomeMessage(username, guildName) {
-  const prompt = `Generate a warm welcome message for ${username} who just joined the server ${guildName}. Keep it friendly and brief.`;
-  
-  try {
-    const response = await analyzeText(prompt, 'generate');
-    return response[0].generated_text;
-  } catch (error) {
-    return `Welcome to ${guildName}, ${username}! 👋`;
-  }
-}
-
 client.on('guildMemberAdd', async (member) => {
-  const { data: settings } = await supabase
-    .from('server_settings')
-    .select('welcome_channel_id, welcome_message, auto_role_id')  // Added auto_role_id
-    .eq('guild_id', member.guild.id)
-    .single();
+  const guildId = member.guild.id;
+  const serverName = member.guild.name;
 
-  // Auto-role assignment
-  if (settings?.auto_role_id) {
-    try {
+  try {
+    const { data: settings, error } = await supabase
+      .from('server_settings')
+      .select('*')
+      .eq('guild_id', guildId)
+      .single();
+
+    if (error || !settings) return;
+
+    // Welcome message
+    if (settings.welcome_channel_id && settings.welcome_message) {
+      const channel = await member.guild.channels.fetch(settings.welcome_channel_id).catch(() => null);
+      if (channel) {
+        const personalizedMessage = settings.welcome_message
+          .replace('{user}', member.user.tag)
+          .replace('{memberCount}', member.guild.memberCount);
+
+        const embed = new EmbedBuilder()
+          .setColor('#3498db')
+          .setTitle('🎉 Welcome!')
+          .setDescription(personalizedMessage)
+          .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+          .setFooter({ text: `Member #${member.guild.memberCount}` })
+          .setTimestamp();
+
+        await channel.send({ embeds: [embed] });
+      }
+    }
+
+    // Auto-role
+    if (settings.auto_role_id) {
       const role = member.guild.roles.cache.get(settings.auto_role_id);
       if (role) {
-        await member.roles.add(role);
-        console.log(`Assigned role ${role.name} to new member ${member.user.tag}`);
+        await member.roles.add(role).catch(console.error);
       }
-    } catch (error) {
-      console.error(`Failed to assign auto-role to ${member.user.tag}:`, error);
     }
+
+    // Track join in database
+    await supabase.from('member_joins').insert({
+      guild_id: guildId,
+      user_id: member.user.id,
+      username: member.user.tag,
+      server_name: serverName
+    });
+
+    // Log the user join
+    const logsChannel = await getLogsChannel(guildId);
+    if (logsChannel) {
+      const joinEmbed = new EmbedBuilder()
+        .setColor('#00FF00')
+        .setTitle('User Joined')
+        .setDescription(`${member.user.tag} has joined the server.`)
+        .setTimestamp();
+      await logsChannel.send({ embeds: [joinEmbed] });
+    }
+  } catch (error) {
+    console.error('Error handling member join:', error);
   }
-
-  // Existing welcome message logic
-  if (!settings?.welcome_channel_id) return;
-
-  const welcomeChannel = member.guild.channels.cache.get(settings.welcome_channel_id);
-  if (!welcomeChannel) return;
-
-  const customMessage = await generateWelcomeMessage(member.user.username, member.guild.name);
-  
-  const welcomeEmbed = new EmbedBuilder()
-    .setColor('#00FF00')
-    .setTitle('Welcome!')
-    .setDescription(customMessage)
-    .setThumbnail(member.user.displayAvatarURL())
-    .setTimestamp();
-
-  await welcomeChannel.send({ embeds: [welcomeEmbed] });
 });
 
 client.on('guildMemberRemove', async (member) => {
@@ -345,7 +367,8 @@ client.on('interactionCreate', async (interaction) => {
           { name: '🚫 `/filter`', value: 'Set the curse word filter level (light, moderate, strict).' },
           { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
           { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
-          { name: '📊 `/status`', value: 'Shows bot\'s current status, ping, and uptime.' }
+          { name: '📊 `/status`', value: 'Shows the bot\'s current status, ping, and uptime.' },
+          { name: '🤖 `/ask`', value: 'Ask the AI assistant a question.' }
         );
       await interaction.reply({ embeds: [helpEmbed] });
     }
@@ -380,60 +403,68 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.reply({ embeds: [statusEmbed] });
     }
 
-    if (commandName === 'analyze') {
-      const message = interaction.options.getString('message');
+    if (commandName === 'ask') {
       await interaction.deferReply();
-      
+
       try {
-        const [toxicityResult, sentimentResult] = await Promise.all([
-          analyzeText(message, 'toxicity'),
-          analyzeText(message, 'sentiment')
-        ]);
+        const question = interaction.options.getString('question');
 
-        const analysisEmbed = new EmbedBuilder()
-          .setColor('#5865F2')
-          .setTitle('Message Analysis')
-          .setDescription(`Analyzed message: ${message}`)
+        const response = await hf.questionAnswering({
+          model: "deepset/roberta-base-squad2",
+          inputs: {
+            question: question,
+            context: `The capital of Alaska is Juneau. The capital of California is Sacramento. 
+                     The capital of Texas is Austin. The capital of Florida is Tallahassee. 
+                     The capital of New York is Albany. The Earth is the third planet from the Sun. 
+                     The Moon is Earth's only natural satellite. The Sun is a star at the center of our solar system.
+                     Paris is the capital of France. London is the capital of England. 
+                     Tokyo is the capital of Japan. Beijing is the capital of China.
+                     
+                     Basic Math Facts:
+                     1 + 1 = 2. 2 + 2 = 4. 3 + 3 = 6. 4 + 4 = 8. 5 + 5 = 10.
+                     2 x 2 = 4. 3 x 3 = 9. 4 x 4 = 16. 5 x 5 = 25. 10 x 10 = 100.
+                     10 - 5 = 5. 20 - 10 = 10. 15 - 5 = 10. 100 - 50 = 50.
+                     10 ÷ 2 = 5. 100 ÷ 4 = 25. 81 ÷ 9 = 9. 50 ÷ 5 = 10.
+                     
+                     Math Formulas:
+                     Area of a square = side × side
+                     Area of a rectangle = length × width
+                     Area of a circle = π × radius²
+                     Circumference of a circle = 2 × π × radius
+                     Volume of a cube = side³
+                     π (pi) is approximately 3.14159
+                     
+                     Common Conversions:
+                     1 kilometer = 1000 meters
+                     1 mile = 1.60934 kilometers
+                     1 hour = 60 minutes
+                     1 minute = 60 seconds
+                     1 kilogram = 1000 grams
+                     1 pound = 0.453592 kilograms`
+          }
+        });
+
+        const answer = response.answer.trim();
+
+        const answerEmbed = new EmbedBuilder()
+          .setColor('#0099ff')
+          .setTitle('AI Response')
           .addFields(
-            { name: 'Toxicity Score', value: `${(toxicityResult[0].score * 100).toFixed(2)}%`, inline: true },
-            { name: 'Primary Emotion', value: sentimentResult[0].label, inline: true }
+            { name: '❓ Question', value: question },
+            { name: '💡 Answer', value: answer || 'I cannot answer that question.' }
           )
-          .setFooter({ text: 'Powered by Hugging Face AI' });
-          
-        await interaction.editReply({ embeds: [analysisEmbed] });
+          .setTimestamp()
+          .setFooter({ text: 'Powered by HuggingFace AI' });
+
+        await interaction.editReply({ embeds: [answerEmbed] });
       } catch (error) {
-        await interaction.editReply('❌ Failed to analyze message.');
+        console.error('AI Error:', error);
+        await interaction.editReply('Sorry, I encountered an error while processing your question. Please try again later.');
       }
-    }
-
-    if (commandName === 'smartwarn') {
-      const targetUser = interaction.options.getUser('user');
-      const message = interaction.options.getString('message');
-      
-      await interaction.deferReply({ ephemeral: true });
-      
-      const analysis = await analyzeViolation(message);
-      
-      if (!analysis) {
-        await interaction.editReply('❌ Failed to analyze message.');
-        return;
-      }
-
-      const warningEmbed = new EmbedBuilder()
-        .setColor(analysis.severity === 'HIGH' ? '#FF0000' : '#FFA500')
-        .setTitle('Smart Warning Analysis')
-        .setDescription(`Target User: ${targetUser.tag}`)
-        .addFields(
-          { name: 'Message', value: message },
-          { name: 'Analysis', value: analysis.reason },
-          { name: 'Recommended Action', value: analysis.shouldWarn ? '⚠️ Issue Warning' : '✅ No Action Needed' }
-        );
-
-      await interaction.editReply({ embeds: [warningEmbed] });
     }
   } catch (error) {
     console.error('Error handling slash command:', error);
-    await interaction.reply('❌ An error occurred while processing your command.');
+    await interaction.reply('❌ An error occurred while processing your command.').catch(() => {});
   }
 });
 
@@ -451,210 +482,311 @@ async function getLogsChannel(guildId) {
   return channel;
 }
 
-// Add these constants for models
-const MODELS = {
-  TOXICITY: 'facebook/roberta-hate-speech-dynabench-r4-target',
-  TEXT_GENERATION: 'google/flan-t5-small', // Changed from bloomz to a smaller model
-  SENTIMENT: 'SamLowe/roberta-base-go_emotions',
-  CLASSIFICATION: 'facebook/bart-large-mnli'
+// Add this near the top with other constants
+const FILTER_LISTS = {
+  light: [
+  //no filtered words in light mode
+  ],
+  moderate: [
+    'nigger', 'faggot', 'retard', 'kike', 'chink', 'spic',
+    'wetback', 'beaner', 'tranny', 'dyke' 
+  ],
+  strict: [
+    'fuck', 'shit', 'bitch', 'asshole',
+    'dick', 'pussy', 'cunt',
+    'damn', 'hell', 'ass', 'piss',
+    'cock', 'whore', 'slut',
+    'nigger', 'faggot', 'retard', 'kike', 'chink', 'spic',
+    'wetback', 'beaner', 'tranny', 'dyke'
+  ]
 };
 
-// Define classification labels
-const CLASSIFICATION_LABELS = [
-  'harassment',
-  'hate speech',
-  'offensive language',
-  'threatening',
-  'safe content'
-];
-
-// Add helper functions
-async function analyzeText(text, task = 'classification') {
-  if (!text || text.trim().length === 0) {
-    console.error('Empty text provided for analysis');
-    return null;
-  }
-
-  try {
-    switch (task) {
-      case 'generate':
-        return await hf.textGeneration({
-          model: MODELS.TEXT_GENERATION,
-          inputs: text.slice(0, 500),
-          parameters: {
-            max_length: 100,
-            temperature: 0.7,
-            top_p: 0.9,
-            do_sample: true
-          }
-        });
-      case 'toxicity':
-        return await hf.textClassification({
-          model: MODELS.TOXICITY,
-          inputs: text.slice(0, 500)
-        });
-      case 'sentiment':
-        return await hf.textClassification({
-          model: MODELS.SENTIMENT,
-          inputs: text.slice(0, 500)
-        });
-      case 'classification':
-        // Let's simplify this to just use text classification instead of zero-shot
-        return await hf.textClassification({
-          model: MODELS.TOXICITY, // Using the same toxicity model
-          inputs: text.slice(0, 500)
-        });
-      default:
-        return null;
-    }
-  } catch (error) {
-    console.error(`AI Analysis Error (${task}):`, error);
-    return null;
-  }
-}
-
-// Simple cache for recent analyses
-const analysisCache = new Map();
-const CACHE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-
-async function analyzeViolation(message) {
-  const cacheKey = message.trim().toLowerCase();
-  if (analysisCache.has(cacheKey)) {
-    return analysisCache.get(cacheKey);
-  }
-
-  try {
-    const [toxicity, classification] = await Promise.all([
-      analyzeText(message, 'toxicity'),
-      analyzeText(message, 'classification')
-    ]);
-
-    if (!toxicity || !classification) {
-      return null;
-    }
-
-    const toxicityScore = toxicity[0].score;
-    
-    let result;
-    if (toxicityScore > 0.8) {
-      result = {
-        shouldWarn: true,
-        reason: `Severe toxicity detected (${(toxicityScore * 100).toFixed(2)}%)`,
-        severity: 'HIGH',
-        score: toxicityScore
-      };
-    } else if (toxicityScore > 0.6) {
-      result = {
-        shouldWarn: true,
-        reason: `High toxicity content (${(toxicityScore * 100).toFixed(2)}%)`,
-        severity: 'MEDIUM',
-        score: toxicityScore
-      };
-    } else if (toxicityScore > 0.4) {
-      result = {
-        shouldWarn: true,
-        reason: `Moderate toxicity content (${(toxicityScore * 100).toFixed(2)}%)`,
-        severity: 'LOW',
-        score: toxicityScore
-      };
-    } else {
-      result = {
-        shouldWarn: false,
-        reason: 'Content appears safe',
-        severity: 'NONE',
-        score: toxicityScore
-      };
-    }
-
-    analysisCache.set(cacheKey, result);
-    setTimeout(() => analysisCache.delete(cacheKey), CACHE_TIMEOUT);
-
-    return result;
-  } catch (error) {
-    console.error('Violation analysis error:', error);
-    return null;
-  }
-}
-
-// Rate limiting for message analysis
-const messageAnalysisRateLimit = new Map();
-const RATE_LIMIT_TIMEOUT = 60000; // 1 minute
-const MAX_MESSAGES_PER_MINUTE = 5;
-
+// Message filter handler
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  // Check rate limit
-  const userId = message.author.id;
-  const userRateLimit = messageAnalysisRateLimit.get(userId) || 0;
-  if (userRateLimit >= MAX_MESSAGES_PER_MINUTE) return;
-  messageAnalysisRateLimit.set(userId, userRateLimit + 1);
-  setTimeout(() => messageAnalysisRateLimit.set(userId, Math.max(0, messageAnalysisRateLimit.get(userId) - 1)), RATE_LIMIT_TIMEOUT);
+  try {
+    // Get server's filter settings
+    const { data: filterSettings } = await supabase
+      .from('filtering_settings')
+      .select('filter_level')
+      .eq('guild_id', message.guild.id)
+      .single();
 
-  const analysis = await analyzeViolation(message.content);
-  if (!analysis) return;
+    if (!filterSettings || !filterSettings.filter_level) return;
 
-  const { data: settings } = await supabase
-    .from('server_settings')
-    .select('logs_channel_id, filter_level')
-    .eq('guild_id', message.guild.id)
-    .single();
+    // Get server's ignored channel
+    const { data: serverSettings } = await supabase
+      .from('server_settings')
+      .select('ignored_channel_id')
+      .eq('guild_id', message.guild.id)
+      .single();
 
-  if (!settings?.logs_channel_id) return;
+    // Skip filtering if in ignored channel
+    if (serverSettings?.ignored_channel_id === message.channel.id) return;
 
-  const logsChannel = message.guild.channels.cache.get(settings.logs_channel_id);
-  if (!logsChannel) return;
+    const content = message.content.toLowerCase();
+    const filterLevel = filterSettings.filter_level;
+    
+    // Check if message contains any filtered words
+    const filteredWords = FILTER_LISTS[filterLevel];
+    const hasFilteredWord = filteredWords.some(word => 
+      content.includes(word) || 
+      content.replace(/[^a-zA-Z]/g, '').includes(word.replace(/[^a-zA-Z]/g, ''))  // Check without special characters
+    );
 
-  // Enhanced action based on filter level and severity
-  const shouldDelete = 
-    (settings.filter_level === 'strict' && analysis.severity !== 'NONE') ||
-    (settings.filter_level === 'moderate' && ['HIGH', 'MEDIUM'].includes(analysis.severity)) ||
-    (settings.filter_level === 'light' && analysis.severity === 'HIGH');
-
-  // New: Auto-warn if toxicity is over 90%
-  const shouldWarn = analysis.score > 0.9;
-
-  if (shouldDelete) {
-    try {
+    if (hasFilteredWord) {
+      // Delete the message
       await message.delete();
-    } catch (error) {
-      console.error('Failed to delete message:', error);
-    }
-  }
 
-  // Add warning to database if toxicity > 90%
-  if (shouldWarn) {
-    try {
+      // Send warning to channel
+      const tempMsg = await message.channel.send(
+        `${message.author}, your message was removed for containing inappropriate content.`
+      );
+      setTimeout(() => tempMsg.delete().catch(() => {}), 5000);
+
+      // Log the filtered message
+      const logsChannel = await getLogsChannel(message.guild.id);
+      if (logsChannel) {
+        const logEmbed = new EmbedBuilder()
+          .setColor('#FF9900')
+          .setTitle('Message Filtered')
+          .addFields(
+            { name: 'User', value: `${message.author.tag}` },
+            { name: 'Channel', value: `<#${message.channel.id}>` },
+            { name: 'Filter Level', value: filterLevel }
+          )
+          .setTimestamp();
+        await logsChannel.send({ embeds: [logEmbed] });
+      }
+    }
+  } catch (error) {
+    console.error('Error in message filter:', error);
+  }
+});
+
+// Filter command handler remains the same
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isCommand()) return;
+
+  const { commandName, guild } = interaction;
+
+  try {
+    if (commandName === 'welcome') {
+      const channel = interaction.options.getChannel('channel');
+      await supabase
+        .from('server_settings')
+        .upsert({ guild_id: guild.id, welcome_channel_id: channel.id }, { onConflict: ['guild_id'] });
+      await interaction.reply(`✅ Welcome channel set to ${channel}.`);
+    }
+
+    if (commandName === 'wmessage') {
+      const message = interaction.options.getString('message');
+      await supabase
+        .from('server_settings')
+        .upsert({ guild_id: guild.id, welcome_message: message }, { onConflict: ['guild_id'] });
+      await interaction.reply(`✅ Welcome message set: "${message}"`);
+    }
+
+    if (commandName === 'joinrole') {
+      const role = interaction.options.getRole('role');
+      await supabase
+        .from('server_settings')
+        .upsert({ guild_id: guild.id, auto_role_id: role.id }, { onConflict: ['guild_id'] });
+      await interaction.reply(`✅ New members will be assigned ${role}.`);
+    }
+
+    if (commandName === 'ignorelinks') {
+      const channel = interaction.options.getChannel('channel');
+      await supabase
+        .from('server_settings')
+        .upsert({ guild_id: guild.id, ignored_channel_id: channel.id }, { onConflict: ['guild_id'] });
+      await interaction.reply(`✅ Invite links will be ignored in ${channel}.`);
+    }
+
+    if (commandName === 'filter') {
+      const filterLevel = interaction.options.getString('level');
+      await supabase
+        .from('filtering_settings')
+        .upsert({ guild_id: guild.id, filter_level: filterLevel }, { onConflict: ['guild_id'] });
+      await interaction.reply(`✅ Filter level set to ${filterLevel}.`);
+    }
+
+    if (commandName === 'warn') {
+      const targetUser = interaction.options.getUser('user');
+      const reason = interaction.options.getString('reason');
+      const logsChannel = await getLogsChannel(guild.id);
+
+      if (!logsChannel) {
+        await interaction.reply('⚠️ No logs channel set. Please set a logs channel using `/logs` command.');
+        return;
+      }
+
+      // Add the "Warned by: username" format
+      const warnedBy = `Warned by: ${interaction.user.tag}`;
+
+      // Send the warning message to the logs channel
+      const warningEmbed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setTitle('User Warned')
+        .setDescription(`${targetUser.tag} was warned.`)
+        .addFields(
+          { name: 'Reason', value: reason },
+          { name: 'Warned by', value: warnedBy }
+        )
+        .setTimestamp();
+
+      await logsChannel.send({ embeds: [warningEmbed] });
+
+      // Save the warning to Supabase
       await supabase.from('user_warns').insert([{
-        guild_id: message.guild.id,
-        user_id: message.author.id,
-        username: message.author.tag,
-        reason: `Auto-warning: High toxicity detected (${(analysis.score * 100).toFixed(2)}%)`,
-        warned_by: 'FrostMod AI',
+        guild_id: guild.id,
+        user_id: targetUser.id,
+        username: targetUser.tag,
+        reason: reason,
+        warned_by: warnedBy, // Store the "Warned by: username"
         timestamp: new Date().toISOString(),
       }]);
-    } catch (error) {
-      console.error('Failed to save warning:', error);
+
+
+      await interaction.reply(`✅ ${targetUser.tag} has been warned for: ${reason}`);
     }
+
+    if (commandName === 'logs') {
+      const channel = interaction.options.getChannel('channel');
+      await supabase
+        .from('server_settings')
+        .upsert({ guild_id: guild.id, logs_channel_id: channel.id }, { onConflict: ['guild_id'] });
+      await interaction.reply(`✅ Logs channel set to ${channel}.`);
+    }
+
+    if (commandName === 'help') {
+      const helpEmbed = new EmbedBuilder()
+        .setColor('#5865F2')
+        .setTitle('FrostMod Commands')
+        .setDescription('A moderation bot with welcome messages and invite link filtering.')
+        .addFields(
+          { name: '🛠️ `/welcome`', value: 'Set the welcome channel for new members.' },
+          { name: '💬 `/wmessage`', value: 'Set the welcome message (supports `{user}` and `{memberCount}`).' },
+          { name: '🧑‍🤝‍🧑 `/joinrole`', value: 'Set an auto-role for new members.' },
+          { name: '🔒 `/ignorelinks`', value: 'Allow invite links in a specific channel.' },
+          { name: '🚫 `/filter`', value: 'Set the curse word filter level (light, moderate, strict).' },
+          { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
+          { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
+          { name: '📊 `/status`', value: 'Shows the bot\'s current status, ping, and uptime.' },
+          { name: '🤖 `/ask`', value: 'Ask the AI assistant a question.' }
+        );
+      await interaction.reply({ embeds: [helpEmbed] });
+    }
+
+    if (commandName === 'status') {
+      const ping = client.ws.ping;
+      const uptime = Math.floor(client.uptime / 1000); // Convert to seconds
+
+      // Calculate readable uptime
+      const days = Math.floor(uptime / 86400);
+      const hours = Math.floor((uptime % 86400) / 3600);
+      const minutes = Math.floor((uptime % 3600) / 60);
+      const seconds = uptime % 60;
+
+      const uptimeString = [
+        days ? `${days}d` : '',
+        hours ? `${hours}h` : '',
+        minutes ? `${minutes}m` : '',
+        `${seconds}s`
+      ].filter(Boolean).join(' ');
+
+      const statusEmbed = new EmbedBuilder()
+        .setColor('#00FF00')
+        .setTitle('🤖 Bot Status')
+        .addFields(
+          { name: '📡 Ping', value: `${ping}ms`, inline: true },
+          { name: '⏰ Uptime', value: uptimeString, inline: true },
+          { name: '🔌 Connection', value: client.ws.status === 0 ? 'Connected' : 'Reconnecting', inline: true }
+        )
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [statusEmbed] });
+    }
+
+    if (commandName === 'ask') {
+      await interaction.deferReply();
+
+      try {
+        const question = interaction.options.getString('question');
+
+        const response = await hf.questionAnswering({
+          model: "deepset/roberta-base-squad2",
+          inputs: {
+            question: question,
+            context: `The capital of Alaska is Juneau. The capital of California is Sacramento. 
+                     The capital of Texas is Austin. The capital of Florida is Tallahassee. 
+                     The capital of New York is Albany. The Earth is the third planet from the Sun. 
+                     The Moon is Earth's only natural satellite. The Sun is a star at the center of our solar system.
+                     Paris is the capital of France. London is the capital of England. 
+                     Tokyo is the capital of Japan. Beijing is the capital of China.
+                     
+                     Basic Math Facts:
+                     1 + 1 = 2. 2 + 2 = 4. 3 + 3 = 6. 4 + 4 = 8. 5 + 5 = 10.
+                     2 x 2 = 4. 3 x 3 = 9. 4 x 4 = 16. 5 x 5 = 25. 10 x 10 = 100.
+                     10 - 5 = 5. 20 - 10 = 10. 15 - 5 = 10. 100 - 50 = 50.
+                     10 ÷ 2 = 5. 100 ÷ 4 = 25. 81 ÷ 9 = 9. 50 ÷ 5 = 10.
+                     
+                     Math Formulas:
+                     Area of a square = side × side
+                     Area of a rectangle = length × width
+                     Area of a circle = π × radius²
+                     Circumference of a circle = 2 × π × radius
+                     Volume of a cube = side³
+                     π (pi) is approximately 3.14159
+                     
+                     Common Conversions:
+                     1 kilometer = 1000 meters
+                     1 mile = 1.60934 kilometers
+                     1 hour = 60 minutes
+                     1 minute = 60 seconds
+                     1 kilogram = 1000 grams
+                     1 pound = 0.453592 kilograms`
+          }
+        });
+
+        const answer = response.answer.trim();
+
+        const answerEmbed = new EmbedBuilder()
+          .setColor('#0099ff')
+          .setTitle('AI Response')
+          .addFields(
+            { name: '❓ Question', value: question },
+            { name: '💡 Answer', value: answer || 'I cannot answer that question.' }
+          )
+          .setTimestamp()
+          .setFooter({ text: 'Powered by HuggingFace AI' });
+
+        await interaction.editReply({ embeds: [answerEmbed] });
+      } catch (error) {
+        console.error('AI Error:', error);
+        await interaction.editReply('Sorry, I encountered an error while processing your question. Please try again later.');
+      }
+    }
+  } catch (error) {
+    console.error('Error handling slash command:', error);
+    await interaction.reply('❌ An error occurred while processing your command.').catch(() => {});
   }
-
-  const logEmbed = new EmbedBuilder()
-    .setColor(analysis.severity === 'HIGH' ? '#FF0000' : analysis.severity === 'MEDIUM' ? '#FFA500' : '#FFFF00')
-    .setTitle('Auto-Moderation Alert')
-    .setDescription(`Message from ${message.author.tag} was flagged.`)
-    .addFields(
-      { name: 'Message', value: message.content.slice(0, 1024) },
-      { name: 'Reason', value: analysis.reason },
-      { name: 'Action Taken', value: [
-        shouldDelete ? 'Message Deleted' : 'Message Flagged',
-        shouldWarn ? 'Warning Issued' : 'No Warning'
-      ].filter(Boolean).join(', ') },
-      { name: 'Channel', value: `<#${message.channel.id}>` }
-    )
-    .setTimestamp();
-
-  await logsChannel.send({ embeds: [logEmbed] });
 });
+
+// Helper function to get logs channel from DB
+async function getLogsChannel(guildId) {
+  const { data, error } = await supabase
+    .from('server_settings')
+    .select('logs_channel_id')
+    .eq('guild_id', guildId)
+    .single();
+
+  if (error || !data || !data.logs_channel_id) return null;
+
+  const channel = await client.channels.fetch(data.logs_channel_id).catch(() => null);
+  return channel;
+}
 
 // Log in the bot
 client.login(process.env.DISCORD_TOKEN);
