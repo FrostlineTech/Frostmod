@@ -1,6 +1,6 @@
 {
   "name": "frostmod",
-  "version": "1.0.0",  
+  "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -13,10 +13,10 @@
   "dependencies": {
     "@discordjs/builders": "^0.15.0",
     "@discordjs/rest": "^1.1.0",
+    "@huggingface/inference": "^3.7.1",
     "@supabase/supabase-js": "^2.49.4",
     "discord-api-types": "^0.37.0",
     "discord.js": "^14.18.0",
     "dotenv": "^16.4.7"
   }
 }
-
