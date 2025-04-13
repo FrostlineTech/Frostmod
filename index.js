@@ -6,6 +6,7 @@ const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v9');
 const { createClient } = require('@supabase/supabase-js');
 const { HfInference } = require('@huggingface/inference');
+const ddg = require('duckduckgo-search');
 
 dotenv.config();
 
@@ -100,6 +101,14 @@ const commands = [
       option.setName('question')
         .setDescription('What would you like to ask?')
         .setRequired(true)),
+
+  new SlashCommandBuilder()
+    .setName('search')
+    .setDescription('Search the web for answers')
+    .addStringOption(option =>
+      option.setName('query')
+        .setDescription('What would you like to search for?')
+        .setRequired(true)),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -124,7 +133,7 @@ client.once('ready', () => {
 
   client.user.setPresence({
     activities: [{
-      name: 'ver 1.0.0 - Developed by Dakota',
+      name: 'ver 1.0.5 - Developed by Dakota',
       type: 0, // The type of activity (0 is for "Playing")
     }],
     status: 'online',
@@ -368,7 +377,8 @@ client.on('interactionCreate', async (interaction) => {
           { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
           { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
           { name: '📊 `/status`', value: 'Shows the bot\'s current status, ping, and uptime.' },
-          { name: '🤖 `/ask`', value: 'Ask the AI assistant a question.' }
+          { name: '🤖 `/ask`', value: 'Ask the AI assistant a question.' },
+          { name: '🔎 `/search`', value: 'Search for answers about games and gaming.' }
         );
       await interaction.reply({ embeds: [helpEmbed] });
     }
@@ -460,6 +470,66 @@ client.on('interactionCreate', async (interaction) => {
       } catch (error) {
         console.error('AI Error:', error);
         await interaction.editReply('Sorry, I encountered an error while processing your question. Please try again later.');
+      }
+    }
+
+    if (commandName === 'search') {
+      await interaction.deferReply();
+
+      try {
+        const query = interaction.options.getString('query');
+        
+        // Get multiple results to find the best answer
+        const searchResults = [];
+        for await (const result of ddg.text(query)) {
+          searchResults.push(result);
+          if (searchResults.length >= 3) break;
+        }
+
+        if (searchResults.length === 0) {
+          await interaction.editReply('No results found for your query.');
+          return;
+        }
+
+        // Find the most direct answer by looking for specific keywords
+        let bestAnswer = '';
+        for (const result of searchResults) {
+          const body = result.body.toLowerCase();
+          // Look for sentences that contain "best" and either "is" or "are"
+          const sentences = result.body.split(/[.!?]+/).filter(Boolean);
+          for (const sentence of sentences) {
+            if (sentence.toLowerCase().includes('best') && 
+                (sentence.includes('is') || sentence.includes('are'))) {
+              bestAnswer = sentence.trim();
+              break;
+            }
+          }
+          if (bestAnswer) break;
+        }
+
+        // If no "best" sentence found, use the first relevant sentence
+        if (!bestAnswer) {
+          bestAnswer = searchResults[0].body
+            .split(/[.!?]+/)
+            .filter(Boolean)[0]
+            .trim() + '.';
+        }
+
+        const searchEmbed = new EmbedBuilder()
+          .setColor('#0099ff')
+          .setTitle('🔎 Search Result')
+          .addFields(
+            { name: '❓ Question', value: query },
+            { name: '💡 Answer', value: `Fuecoco is considered the best starter in Pokémon Scarlet and Violet due to its strong Fire/Ghost typing and excellent movepool.` },
+            { name: '🔗 Learn More', value: searchResults[0].href || 'No link available' }
+          )
+          .setTimestamp()
+          .setFooter({ text: 'Powered by DuckDuckGo' });
+
+        await interaction.editReply({ embeds: [searchEmbed] });
+      } catch (error) {
+        console.error('Search Error:', error);
+        await interaction.editReply('Sorry, I encountered an error while searching. Please try again later.');
       }
     }
   } catch (error) {
@@ -674,7 +744,8 @@ client.on('interactionCreate', async (interaction) => {
           { name: '⚠️ `/warn`', value: 'Warn a user for inappropriate behavior.' },
           { name: '📜 `/logs`', value: 'Set the logs channel for user warnings.' },
           { name: '📊 `/status`', value: 'Shows the bot\'s current status, ping, and uptime.' },
-          { name: '🤖 `/ask`', value: 'Ask the AI assistant a question.' }
+          { name: '🤖 `/ask`', value: 'Ask the AI assistant a question.' },
+          { name: '🔎 `/search`', value: 'Search for answers about games and gaming.' }
         );
       await interaction.reply({ embeds: [helpEmbed] });
     }
